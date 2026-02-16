@@ -34,7 +34,7 @@ y = data['is_goal']
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-# 2. Define the "Search Space" (The range of dials to turn)
+
 param_grid = {
     'n_estimators': [100, 200, 300, 500],        # Number of trees
     'max_depth': [3, 4, 5, 6, 8],                # How deep each tree goes

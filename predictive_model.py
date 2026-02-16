@@ -40,15 +40,13 @@ long_range_df = df[df['distance'] > 24].copy()
 print(f"Analyzing {len(long_range_df)} Long-Range Shots")
 
 # C. ADVANCED FEATURES (Proxies for Phase/Structure)
-# We select categorical variables that describe the "Situation"
 features_to_use = ['distance', 'angle', 'minute', 'situation', 'lastAction', 'shotType']
 
 # Prepare the dataset
 X = long_range_df[features_to_use]
 y = long_range_df['is_goal']
 
-# D. ONE-HOT ENCODING (Crucial Step)
-# Computers can't read text like "OpenPlay". We convert them to numbers (0/1).
+
 X = pd.get_dummies(X, columns=['situation', 'lastAction', 'shotType'], drop_first=True)
 
 print(f"Total Input Features after Encoding: {X.shape[1]}")
