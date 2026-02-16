@@ -35,9 +35,9 @@ def calc_angle(x, y):
 df['angle'] = df.apply(lambda row: calc_angle(row['x_m'], row['y_m']), axis=1)
 df['is_goal'] = df['result'].apply(lambda x: 1 if x == 'Goal' else 0)
 
-# B. FILTER: Long Range Only
-long_range_df = df[df['distance'] > 24].copy()
-print(f"Analyzing {len(long_range_df)} Long-Range Shots")
+# B. FILTER: Full Pitch
+long_range_df = df.copy()
+print(f"Analyzing {len(long_range_df)} Total Shots (Full Pitch)")
 
 # C. ADVANCED FEATURES (Proxies for Phase/Structure)
 features_to_use = ['distance', 'angle', 'minute', 'situation', 'lastAction', 'shotType']
@@ -73,8 +73,8 @@ model = xgb.XGBClassifier(
 )
 
 model.fit(X_train, y_train)
-joblib.dump(model, 'xgboost_long_range_model.pkl')
-print("Advanced Model Saved.")
+joblib.dump(model, 'xgboost_full_pitch.pkl')
+print("Full Pitch Model Saved.")
 
 # ==========================================
 # 3. EVALUATION (Did adding factors help?)

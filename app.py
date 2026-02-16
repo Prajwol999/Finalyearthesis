@@ -27,9 +27,9 @@ st.markdown("""
 @st.cache_resource
 def load_model():
     try:
-        return joblib.load('xgboost_tuned_best.pkl')
+        return joblib.load('xgboost_full_pitch.pkl')
     except FileNotFoundError:
-        st.error("⚠️ Model file not found. Please run 'tune_model.py' first.")
+        st.error("⚠️ Model file not found. Please run 'predictive_model.py' first.")
         return None
 
 # Load Data
@@ -58,6 +58,10 @@ def calc_angle(x, y):
     if a * b == 0: return 0
     return np.degrees(np.arccos(np.clip((a**2 + b**2 - c**2) / (2 * a * b), -1.0, 1.0)))
 
+def update_pitch_from_sliders():
+    if 'home_team' in st.session_state:
+        st.session_state.home_team["ST"] = (105 - st.session_state.slider_dist, st.session_state.slider_side)
+
 # ==========================================
 # 3. SIDEBAR (The Control Panel)
 # ==========================================
@@ -66,33 +70,28 @@ st.sidebar.header("🎯 Scenario Builder")
 # Shooter Position
 st.sidebar.subheader("1. Shooter Position")
 
-# 2-WAY SYNC LOGIC
-if 'home_team' in st.session_state and "ST" in st.session_state.home_team:
-    st_x, st_y = st.session_state.home_team["ST"]
-    # Calculate slider equivalents
-    current_dist = 105 - st_x
-    current_side = st_y
-else:
-    # Default
-    current_dist = 28
-    current_side = 34
-
-# Initialize session state for sliders if not present or sync them
-if "slider_dist" not in st.session_state:
-    st.session_state.slider_dist = current_dist
-if "slider_side" not in st.session_state:
-    st.session_state.slider_side = current_side
 
 # If the pitch was clicked (state updated), force sliders to match
 # We detect this by checking if the calculated pitch position differs from the slider state
-if abs(st.session_state.slider_dist - current_dist) > 0.1:
-    st.session_state.slider_dist = current_dist
-if abs(st.session_state.slider_side - current_side) > 0.1:
-    st.session_state.slider_side = current_side
 
 
-x_input = st.sidebar.slider("Distance from Goal (m)", 0, 45, key="slider_dist", help="0m = Goal Line, 16.5m = Penalty Box") 
-y_input = st.sidebar.slider("Side Position (m)", 0, 68, key="slider_side", help="0 = Left Sideline, 34 = Center, 68 = Right Sideline")
+# Sync sliders to match pitch state (if pitch was updated by click)
+if 'home_team' in st.session_state and "ST" in st.session_state.home_team:
+    st_x, st_y = st.session_state.home_team["ST"]
+    # We only update if the slider is NOT the one driving the change (to avoid jitter/loops)
+    # But since we use on_change for sliders, we can just sync here safely? 
+    # Actually, if we sync here, we override the user's manual slider input if distinct?
+    # No, because if user moved slider -> callback ran -> home_team updated -> rerun -> this syncs to same value.
+    # If user clicked pitch -> home_team updated -> rerun -> this syncs slider to new pitch val.
+    st.session_state.slider_dist = 105 - st_x
+    st.session_state.slider_side = st_y
+else:
+    # Initialize defaults if not present (only runs on first load basically)
+    if "slider_dist" not in st.session_state: st.session_state.slider_dist = 28
+    if "slider_side" not in st.session_state: st.session_state.slider_side = 34
+
+x_input = st.sidebar.slider("Distance from Goal (m)", 0, 24, key="slider_dist", help="0m = Goal Line, 16.5m = Penalty Box", on_change=update_pitch_from_sliders) 
+y_input = st.sidebar.slider("Side Position (m)", 0, 68, key="slider_side", help="0 = Left Sideline, 34 = Center, 68 = Right Sideline", on_change=update_pitch_from_sliders)
 
 real_x = 105 - x_input 
 real_y = y_input
@@ -100,8 +99,7 @@ real_y = y_input
 # Update ST position from sliders if they changed (Handled by the fact that real_x drives the model, 
 # AND we should update the dot if slider moves? The previous code handled Slider -> Dot via default_home usage?
 # Actually, we need to update 'home_team' ST if slider moves too, to keep dots synced)
-if 'home_team' in st.session_state:
-     st.session_state.home_team["ST"] = (105 - x_input, y_input)
+
 
 
 
@@ -197,16 +195,7 @@ with tab1:
             "home": default_home,
             "away": default_away
         },
-        "De Bruyne vs Arsenal (Counter)": {
-            "home": {
-                "GK": (5, 34), "CDM": (40, 34), "LCM": (55, 20), "RCM": (55, 48),
-                "LW": (85, 10), "RW": (75, 60), "ST": (75, 40) # KDB deep run
-            },
-            "away": {
-                "GK": (104.5, 34), "RB": (90, 15), "RCB": (95, 30), "LCB": (95, 38), "LB": (90, 53),
-                "CDM": (85, 34)
-            }
-        },
+
         "Deep Block (Park the Bus)": {
             "home": {
                 "GK": (5, 34), "ST": (80, 34), "LW": (70, 10), "RW": (70, 58) 
@@ -278,46 +267,6 @@ with tab1:
             pitch.scatter(px, py, ax=ax, s=400, c='#1f77b4', edgecolors='black', zorder=3)
             ax.text(py, px, role, ha='center', va='center', color='white', fontsize=8, fontweight='bold', zorder=4)
 
-        # --- BEST PASS LOGIC ---
-        # 1. Identify Shooter (Use selected player if Attacking ST, else find 'ST')
-        shooter_pos = st.session_state.home_team.get("ST", (95, 34)) # Default if missing
-        
-        best_pass_xg = -1
-        best_teammate = None
-        
-        if model:
-            # Check every OTHER attacking player
-            for role, (tx, ty) in st.session_state.home_team.items():
-                if role == "ST": continue # Don't pass to self
-                
-                # Calculate simple xG for this teammate position
-                # Assuming similar context (Same minute, Open Play)
-                t_dist = np.sqrt((105 - tx)**2 + (34 - ty)**2)
-                t_angle = calc_angle(tx, ty)
-                
-                # Create input vector
-                t_features = model.get_booster().feature_names
-                t_input = pd.DataFrame(0, index=[0], columns=t_features)
-                t_input['distance'] = t_dist
-                t_input['angle'] = t_angle
-                t_input['minute'] = minute_input
-                # Hardcode some typical context for a pass receiver (Open Play, Standard Shot)
-                if "situation_OpenPlay" in t_features: t_input["situation_OpenPlay"] = 1
-                if "shotType_RightFoot" in t_features: t_input["shotType_RightFoot"] = 1
-                
-                t_prob = model.predict_proba(t_input)[0][1]
-                
-                if t_prob > best_pass_xg:
-                    best_pass_xg = t_prob
-                    best_teammate = (tx, ty)
-
-            # Draw Line to Best Option
-            if best_teammate and best_pass_xg > prob * 1.05 and best_pass_xg > 0.05: # Only suggest if 5% better and meaningful
-                bx, by = best_teammate
-                ax.plot([shooter_pos[1], by], [shooter_pos[0], bx], color='#2ca02c', linestyle='-', linewidth=3, alpha=0.8, zorder=1)
-                ax.scatter(bx, by, s=600, facecolors='none', edgecolors='#2ca02c', linewidth=3, zorder=5)
-                # Annotate
-                pitch.annotate(f"Best Opt\n{best_pass_xg:.2f} xG", (bx, by-3), ax=ax, fontsize=10, color='#2ca02c', ha='center', fontweight='bold', zorder=5)
         
         # Legend (simplified)
         ax.legend([plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='#ff4b4b', markersize=10, label='Attacking'),
@@ -346,8 +295,15 @@ with tab1:
             new_pitch_x = 105 - (rel_y_screen * 105) 
             new_pitch_y = rel_x_screen * 68
             
-            active_team[selected_player] = (new_pitch_x, new_pitch_y)
-            st.rerun()
+            
+            # Use 'last_click' to prevent loop
+            current_click = (new_pitch_x, new_pitch_y)
+            last_click = st.session_state.get("last_click", None)
+            
+            if current_click != last_click:
+                st.session_state.last_click = current_click
+                active_team[selected_player] = (new_pitch_x, new_pitch_y)
+                st.rerun()
 
     with col2:
         st.write("---")
@@ -355,7 +311,7 @@ with tab1:
         
         # Main Probability Metric
         st.metric("Expected Goals (xG)", f"{prob:.2f}", delta=f"{prob*100:.1f}% Chance")
-        st.progress(min(prob * 5, 1.0)) 
+        st.progress(float(min(prob * 5, 1.0))) 
         
         # Defense Win Probability
         defense_prob = float(1.0 - prob)
